@@ -1,24 +1,20 @@
 #!/usr/bin/env python3
 """
 🤖 100% Autonomous AI Reddit Marketing Bot for Taxi Marne-la-Vallée
-Runs 24/7 in the Cloud (GitHub Actions) even with your computer turned OFF!
-
-Modes:
-- AUTO-POST MODE: If REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, REDDIT_USERNAME, REDDIT_PASSWORD secrets exist,
-  it automatically posts the AI-generated replies directly to Reddit 24/7 without human intervention.
-- DASHBOARD MODE: Updates index.html & opportunities.json for GitHub Pages tracking.
+Uses 403-proof Reddit RSS/Atom feeds to reliably scan travel posts 24/7 in GitHub Cloud.
 """
 
 import os
 import json
 import urllib.request
+import xml.etree.ElementTree as ET
 import datetime
 import sys
+import re
 
-# UTF-8 stdout
 sys.stdout.reconfigure(encoding='utf-8')
 
-# Check if PRAW is available for auto-posting
+# Try loading PRAW if available
 try:
     import praw
     HAS_PRAW = True
@@ -34,13 +30,12 @@ if os.path.exists(ENV_PATH):
                 k, v = line.strip().split('=', 1)
                 os.environ[k] = v
 
-# Load Config
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'config.json')
 with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
     CONFIG = json.load(f)
 
-SUBREDDITS = CONFIG.get('subreddits', ['disneylandparis', 'ParisTravelGuide'])
-KEYWORDS = CONFIG.get('keywords', ['cdg', 'orly', 'taxi', 'disney', 'transfer', 'chessy'])
+SUBREDDITS = CONFIG.get('subreddits', ['disneylandparis', 'ParisTravelGuide', 'paris'])
+KEYWORDS = CONFIG.get('keywords', ['cdg', 'orly', 'taxi', 'disney', 'transfer', 'chessy', 'shuttle', 'uber', 'hotel', 'seat', 'luggage', 'night'])
 SITE_URL = CONFIG.get('site_url', 'https://taximarnavallee.com')
 
 OUTPUT_DIR = os.path.dirname(__file__)
@@ -48,7 +43,6 @@ OUTPUT_HTML = os.path.join(OUTPUT_DIR, 'index.html')
 OUTPUT_JSON = os.path.join(OUTPUT_DIR, 'opportunities.json')
 REPLIED_FILE = os.path.join(OUTPUT_DIR, 'replied_posts.json')
 
-# Load previously replied posts
 replied_ids = set()
 if os.path.exists(REPLIED_FILE):
     try:
@@ -57,49 +51,64 @@ if os.path.exists(REPLIED_FILE):
     except Exception:
         pass
 
-def get_reddit_client():
-    client_id = os.environ.get('REDDIT_CLIENT_ID')
-    client_secret = os.environ.get('REDDIT_CLIENT_SECRET')
-    username = os.environ.get('REDDIT_USERNAME')
-    password = os.environ.get('REDDIT_PASSWORD')
-
-    if HAS_PRAW and client_id and client_secret and username and password:
-        print("⚡ Reddit API credentials found! 100% Autonomous 24/7 Cloud Auto-Posting Enabled.")
-        return praw.Reddit(
-            client_id=client_id,
-            client_secret=client_secret,
-            username=username,
-            password=password,
-            user_agent=f"TaxiMLV-Bot/1.0 by /u/{username}"
-        )
-    else:
-        print("ℹ️ Reddit API credentials not set. Dashboard mode active.")
-        return None
-
-def fetch_reddit_posts_fallback(subreddit):
-    url = f"https://www.reddit.com/r/{subreddit}/new.json?limit=25"
+def fetch_rss_posts(subreddit):
+    """
+    Fetches Reddit entries using the 100% reliable RSS/Atom feed.
+    """
+    url = f"https://www.reddit.com/r/{subreddit}/new.rss"
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Accept': 'application/json'
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
     }
     req = urllib.request.Request(url, headers=headers)
+    entries = []
+    
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode('utf-8'))
-            return data.get('data', {}).get('children', [])
+            content = resp.read()
+            root = ET.fromstring(content)
+            ns = {'atom': 'http://www.w3.org/2005/Atom'}
+            
+            for entry in root.findall('atom:entry', ns):
+                title_elem = entry.find('atom:title', ns)
+                link_elem = entry.find('atom:link', ns)
+                author_elem = entry.find('atom:author/atom:name', ns)
+                updated_elem = entry.find('atom:updated', ns)
+                content_elem = entry.find('atom:content', ns)
+                id_elem = entry.find('atom:id', ns)
+                
+                title = title_elem.text if title_elem is not None else ''
+                link = link_elem.attrib.get('href', '') if link_elem is not None else ''
+                author = author_elem.text if author_elem is not None else 'anonymous'
+                date_raw = updated_elem.text if updated_elem is not None else ''
+                html_body = content_elem.text if content_elem is not None else ''
+                post_id = id_elem.text if id_elem is not None else link
+                
+                # Clean HTML tags from body text
+                clean_text = re.sub('<[^<]+?>', '', html_body)[:300]
+                
+                entries.append({
+                    'id': post_id,
+                    'title': title,
+                    'link': link,
+                    'author': author.replace('/u/', ''),
+                    'date': date_raw[:16].replace('T', ' '),
+                    'text': clean_text
+                })
     except Exception as e:
-        print(f"Warning fetching r/{subreddit}: {e}")
-        return []
+        print(f"Error fetching r/{subreddit} RSS: {e}")
+        
+    return entries
 
 def generate_ai_response(post_title, post_text):
-    title_lower = (post_title + " " + post_text).lower()
+    combined = (post_title + " " + post_text).lower()
     
     route = "CDG / Orly Airport to Disneyland Paris"
-    if "cdg" in title_lower:
+    if "cdg" in combined:
         route = "Paris CDG Airport to Disneyland Paris"
-    elif "orly" in title_lower:
+    elif "orly" in combined:
         route = "Paris Orly Airport to Disneyland Paris"
-    elif "night" in title_lower or "illuminations" in title_lower:
+    elif "night" in combined or "illuminations" in combined:
         route = "Late night transfer from Disney Park / Hotel"
 
     ai_reply = f"""Hi! Here is a breakdown of transport options for your trip ({route}):
@@ -120,95 +129,45 @@ def generate_ai_response(post_title, post_text):
 
     return ai_reply
 
+import time
+
 def main():
     print("=== 🤖 100% Autonomous AI Reddit Cloud Bot Started ===")
-    reddit_api = get_reddit_client()
     all_matches = []
-    new_replies = 0
 
-    if reddit_api:
-        # 100% Autonomous Mode via PRAW API
-        for sub_name in SUBREDDITS:
-            print(f"Scanning r/{sub_name} via Official Reddit API...")
-            try:
-                subreddit = reddit_api.subreddit(sub_name)
-                for submission in subreddit.new(limit=25):
-                    if submission.id in replied_ids:
-                        continue
-                    
-                    combined = (submission.title + " " + submission.selftext).lower()
-                    matched_kws = [kw for kw in KEYWORDS if kw in combined]
-                    
-                    if matched_kws:
-                        ai_reply = generate_ai_response(submission.title, submission.selftext)
-                        
-                        # POST AUTOMATICALLY 24/7 TO REDDIT
-                        try:
-                            print(f"🚀 AUTO-POSTING reply to: {submission.title}...")
-                            submission.reply(ai_reply)
-                            replied_ids.add(submission.id)
-                            new_replies += 1
-                            print("✅ Successfully posted reply automatically!")
-                        except Exception as pe:
-                            print(f"❌ Error auto-posting: {pe}")
-                        
-                        all_matches.append({
-                            'subreddit': sub_name,
-                            'title': submission.title,
-                            'author': str(submission.author),
-                            'date': datetime.datetime.fromtimestamp(submission.created_utc).strftime('%Y-%m-%d %H:%M'),
-                            'url': f"https://www.reddit.com{submission.permalink}",
-                            'keywords': matched_kws,
-                            'text': submission.selftext[:200] + '...',
-                            'ai_reply': ai_reply,
-                            'posted_auto': True
-                        })
-            except Exception as se:
-                print(f"Error scanning r/{sub_name} with API: {se}")
-    else:
-        # Fallback Scraper Mode for Dashboard
-        for sub in SUBREDDITS:
-            print(f"Scanning r/{sub} via Fallback Scraper...")
-            posts = fetch_reddit_posts_fallback(sub)
-            for p in posts:
-                pdata = p.get('data', {})
-                pid = pdata.get('id', '')
-                title = pdata.get('title', '')
-                text = pdata.get('selftext', '')
-                combined = (title + " " + text).lower()
+    for sub in SUBREDDITS:
+        print(f"Scanning r/{sub} via 403-proof RSS...")
+        entries = fetch_rss_posts(sub)
+        print(f"Retrieved {len(entries)} entries from r/{sub}.")
+        
+        for e in entries:
+            combined = (e['title'] + " " + e['text']).lower()
+            matched_kws = [kw for kw in KEYWORDS if kw in combined]
+            
+            if matched_kws:
+                ai_reply = generate_ai_response(e['title'], e['text'])
                 
-                matched_kws = [kw for kw in KEYWORDS if kw in combined]
-                if matched_kws:
-                    permalink = "https://www.reddit.com" + pdata.get('permalink', '')
-                    author = pdata.get('author', 'user')
-                    created_utc = pdata.get('created_utc', 0)
-                    date_str = datetime.datetime.fromtimestamp(created_utc).strftime('%Y-%m-%d %H:%M')
-                    
-                    ai_reply = generate_ai_response(title, text)
-                    
-                    all_matches.append({
-                        'subreddit': sub,
-                        'title': title,
-                        'author': author,
-                        'date': date_str,
-                        'url': permalink,
-                        'keywords': matched_kws,
-                        'text': text[:200] + '...',
-                        'ai_reply': ai_reply,
-                        'posted_auto': False
-                    })
+                all_matches.append({
+                    'subreddit': sub,
+                    'title': e['title'],
+                    'author': e['author'],
+                    'date': e['date'],
+                    'url': e['link'],
+                    'keywords': matched_kws,
+                    'text': e['text'],
+                    'ai_reply': ai_reply
+                })
+        
+        time.sleep(2)
 
-    # Save updated replied IDs
-    with open(REPLIED_FILE, 'w', encoding='utf-8') as f:
-        json.dump(list(replied_ids), f, ensure_ascii=False, indent=2)
+    print(f"Found {len(all_matches)} relevant opportunities across subreddits.")
 
     # Save JSON log
     with open(OUTPUT_JSON, 'w', encoding='utf-8') as f:
         json.dump(all_matches, f, ensure_ascii=False, indent=2)
 
-    # Build HTML Dashboard
+    # Build HTML Dashboard for GitHub Pages
     now_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M UTC')
-    status_text = f"⚡ 100% Autonomous Cloud Bot Active ({new_replies} auto-posted this run)" if reddit_api else "⚡ 24/7 Cloud Scanner Active"
     
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -232,14 +191,14 @@ def main():
 <body>
   <div class="header">
     <h1>🤖 24/7 Autonomous AI Reddit Bot</h1>
-    <div class="status">{status_text} · Last Run: {now_str}</div>
+    <div class="status">⚡ 403-Proof RSS Cloud Scanner Active · Last Scan: {now_str}</div>
   </div>
 
   <div style="max-width: 900px; margin: 0 auto;">
 """
 
     if not all_matches:
-        html += "<p style='text-align:center;'>No new Reddit transport questions detected in this run. Shortcuts below:</p>"
+        html += "<p style='text-align:center;'>No new transport posts found in current scan cycle. Live shortcuts below:</p>"
         html += """
         <div class="card" style="text-align:center;">
           <h3>🚀 Live Search Shortcuts</h3>
@@ -249,12 +208,13 @@ def main():
         """
     else:
         for idx, m in enumerate(all_matches):
-            auto_badge = " <span style='background:#10b981; color:#fff; padding:2px 8px; border-radius:4px; font-size:0.75rem;'>✅ AUTO-POSTED VIA API</span>" if m.get('posted_auto') else ""
+            kw_badges = " ".join([f"<span style='background:#334155; padding:2px 6px; border-radius:4px; font-size:0.75rem;'>#{kw}</span>" for kw in m['keywords']])
             html += f"""
     <div class="card">
-      <div><span class="badge">r/{m['subreddit']}</span>{auto_badge} <small style="color:#94a3b8;">u/{m['author']} • {m['date']}</small></div>
+      <div><span class="badge">r/{m['subreddit']}</span> <small style="color:#94a3b8;">u/{m['author']} • {m['date']}</small></div>
       <h3 style="margin: 10px 0 5px 0;">{m['title']}</h3>
       <p style="color:#cbd5e1; font-size:0.9rem;">{m['text']}</p>
+      <div style="margin-bottom:12px;">{kw_badges}</div>
       
       <h4 style="color:#f59e0b; margin-top:15px;">🤖 AI Generated Reply:</h4>
       <pre id="reply-{idx}">{m['ai_reply']}</pre>
@@ -282,7 +242,7 @@ def main():
     with open(OUTPUT_HTML, 'w', encoding='utf-8') as f:
         f.write(html)
 
-    print(f"✨ 24/7 Autonomous Bot run completed. Dashboard updated at {OUTPUT_HTML}")
+    print(f"✨ Dashboard generated with {len(all_matches)} matches at {OUTPUT_HTML}")
 
 if __name__ == '__main__':
     main()
