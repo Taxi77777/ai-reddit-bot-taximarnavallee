@@ -25,6 +25,15 @@ try:
 except ImportError:
     HAS_PRAW = False
 
+# Load .env file if present
+ENV_PATH = os.path.join(os.path.dirname(__file__), '.env')
+if os.path.exists(ENV_PATH):
+    with open(ENV_PATH, 'r', encoding='utf-8') as ef:
+        for line in ef:
+            if '=' in line and not line.startswith('#'):
+                k, v = line.strip().split('=', 1)
+                os.environ[k] = v
+
 # Load Config
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'config.json')
 with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
