@@ -1,0 +1,9 @@
+{
+  "site_name": "Taxi Marne-la-Vallée",
+  "site_url": "https://taximarnavallee.com",
+  "whatsapp": "+33750535658",
+  "subreddits": ["disneylandparis", "ParisTravelGuide", "paris"],
+  "keywords": ["cdg", "orly", "disney", "disneyland", "taxi", "transfer", "chessy", "shuttle", "uber", "hotel", "seat", "luggage", "night"],
+  "ai_provider": "gemini",
+  "auto_update_github_pages": true
+}
