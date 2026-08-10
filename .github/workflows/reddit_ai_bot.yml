@@ -1,9 +1,9 @@
-name: AI Reddit Marketing Bot - Taxi Marne-la-Vallée
+name: 24/7 Autonomous AI Reddit Bot - Taxi Marne-la-Vallée
 
 on:
   schedule:
-    - cron: '0 */6 * * *' # Runs automatically every 6 hours
-  workflow_dispatch: # Allows manual trigger from GitHub UI
+    - cron: '0 */4 * * *' # Runs automatically every 4 hours in the cloud (24/7, PC OFF)
+  workflow_dispatch: # Allows 1-click manual trigger from GitHub
   push:
     branches:
       - main
@@ -12,7 +12,7 @@ permissions:
   contents: write
 
 jobs:
-  run-ai-bot:
+  run-247-ai-bot:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
@@ -26,17 +26,21 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install requests praw
 
-      - name: Run AI Reddit Bot
+      - name: Run 24/7 AI Cloud Bot
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+          REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+          REDDIT_USERNAME: ${{ secrets.REDDIT_USERNAME }}
+          REDDIT_PASSWORD: ${{ secrets.REDDIT_PASSWORD }}
         run: python ai_reddit_bot.py
 
-      - name: Commit and Push Updated Dashboard to GitHub Pages
+      - name: Commit and Save State Back to Repository
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add index.html opportunities.json
-          git diff --quiet && git diff --staged --quiet || (git commit -m "🤖 Auto-update AI Reddit opportunities dashboard" && git push)
+          git add index.html opportunities.json replied_posts.json
+          git diff --quiet && git diff --staged --quiet || (git commit -m "🤖 24/7 Autonomous Bot run & auto-post update" && git push)

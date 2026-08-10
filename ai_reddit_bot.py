@@ -1,20 +1,29 @@
 #!/usr/bin/env python3
 """
-AI-Powered Reddit Marketing Bot for Taxi Marne-la-Vallée
-Automatically scans Reddit, detects travel queries, and uses AI to generate
-personalized, non-promotional, high-converting responses.
-Designed for GitHub Actions & GitHub Pages.
+🤖 100% Autonomous AI Reddit Marketing Bot for Taxi Marne-la-Vallée
+Runs 24/7 in the Cloud (GitHub Actions) even with your computer turned OFF!
+
+Modes:
+- AUTO-POST MODE: If REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, REDDIT_USERNAME, REDDIT_PASSWORD secrets exist,
+  it automatically posts the AI-generated replies directly to Reddit 24/7 without human intervention.
+- DASHBOARD MODE: Updates index.html & opportunities.json for GitHub Pages tracking.
 """
 
 import os
 import json
 import urllib.request
-import urllib.parse
 import datetime
 import sys
 
-# Ensure UTF-8 output encoding for Windows terminal compatibility
+# UTF-8 stdout
 sys.stdout.reconfigure(encoding='utf-8')
+
+# Check if PRAW is available for auto-posting
+try:
+    import praw
+    HAS_PRAW = True
+except ImportError:
+    HAS_PRAW = False
 
 # Load Config
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'config.json')
@@ -22,15 +31,43 @@ with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
     CONFIG = json.load(f)
 
 SUBREDDITS = CONFIG.get('subreddits', ['disneylandparis', 'ParisTravelGuide'])
-KEYWORDS = CONFIG.get('keywords', ['cdg', 'orly', 'taxi', 'disney', 'transfer'])
+KEYWORDS = CONFIG.get('keywords', ['cdg', 'orly', 'taxi', 'disney', 'transfer', 'chessy'])
 SITE_URL = CONFIG.get('site_url', 'https://taximarnavallee.com')
-WHATSAPP = CONFIG.get('whatsapp', '+33750535658')
 
 OUTPUT_DIR = os.path.dirname(__file__)
 OUTPUT_HTML = os.path.join(OUTPUT_DIR, 'index.html')
 OUTPUT_JSON = os.path.join(OUTPUT_DIR, 'opportunities.json')
+REPLIED_FILE = os.path.join(OUTPUT_DIR, 'replied_posts.json')
 
-def fetch_reddit_posts(subreddit):
+# Load previously replied posts
+replied_ids = set()
+if os.path.exists(REPLIED_FILE):
+    try:
+        with open(REPLIED_FILE, 'r', encoding='utf-8') as f:
+            replied_ids = set(json.load(f))
+    except Exception:
+        pass
+
+def get_reddit_client():
+    client_id = os.environ.get('REDDIT_CLIENT_ID')
+    client_secret = os.environ.get('REDDIT_CLIENT_SECRET')
+    username = os.environ.get('REDDIT_USERNAME')
+    password = os.environ.get('REDDIT_PASSWORD')
+
+    if HAS_PRAW and client_id and client_secret and username and password:
+        print("⚡ Reddit API credentials found! 100% Autonomous 24/7 Cloud Auto-Posting Enabled.")
+        return praw.Reddit(
+            client_id=client_id,
+            client_secret=client_secret,
+            username=username,
+            password=password,
+            user_agent=f"TaxiMLV-Bot/1.0 by /u/{username}"
+        )
+    else:
+        print("ℹ️ Reddit API credentials not set. Dashboard mode active.")
+        return None
+
+def fetch_reddit_posts_fallback(subreddit):
     url = f"https://www.reddit.com/r/{subreddit}/new.json?limit=25"
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
@@ -46,10 +83,6 @@ def fetch_reddit_posts(subreddit):
         return []
 
 def generate_ai_response(post_title, post_text):
-    """
-    Generates a personalized response using AI API if key is present,
-    or smart fallback AI prompt engine.
-    """
     title_lower = (post_title + " " + post_text).lower()
     
     route = "CDG / Orly Airport to Disneyland Paris"
@@ -79,54 +112,101 @@ def generate_ai_response(post_title, post_text):
     return ai_reply
 
 def main():
-    print("=== AI Reddit Bot Started ===")
+    print("=== 🤖 100% Autonomous AI Reddit Cloud Bot Started ===")
+    reddit_api = get_reddit_client()
     all_matches = []
+    new_replies = 0
 
-    for sub in SUBREDDITS:
-        print(f"Scanning r/{sub}...")
-        posts = fetch_reddit_posts(sub)
-        
-        for p in posts:
-            pdata = p.get('data', {})
-            title = pdata.get('title', '')
-            text = pdata.get('selftext', '')
-            combined = (title + " " + text).lower()
-            
-            matched_kws = [kw for kw in KEYWORDS if kw in combined]
-            if matched_kws:
-                permalink = "https://www.reddit.com" + pdata.get('permalink', '')
-                author = pdata.get('author', 'user')
-                created_utc = pdata.get('created_utc', 0)
-                date_str = datetime.datetime.fromtimestamp(created_utc).strftime('%Y-%m-%d %H:%M')
+    if reddit_api:
+        # 100% Autonomous Mode via PRAW API
+        for sub_name in SUBREDDITS:
+            print(f"Scanning r/{sub_name} via Official Reddit API...")
+            try:
+                subreddit = reddit_api.subreddit(sub_name)
+                for submission in subreddit.new(limit=25):
+                    if submission.id in replied_ids:
+                        continue
+                    
+                    combined = (submission.title + " " + submission.selftext).lower()
+                    matched_kws = [kw for kw in KEYWORDS if kw in combined]
+                    
+                    if matched_kws:
+                        ai_reply = generate_ai_response(submission.title, submission.selftext)
+                        
+                        # POST AUTOMATICALLY 24/7 TO REDDIT
+                        try:
+                            print(f"🚀 AUTO-POSTING reply to: {submission.title}...")
+                            submission.reply(ai_reply)
+                            replied_ids.add(submission.id)
+                            new_replies += 1
+                            print("✅ Successfully posted reply automatically!")
+                        except Exception as pe:
+                            print(f"❌ Error auto-posting: {pe}")
+                        
+                        all_matches.append({
+                            'subreddit': sub_name,
+                            'title': submission.title,
+                            'author': str(submission.author),
+                            'date': datetime.datetime.fromtimestamp(submission.created_utc).strftime('%Y-%m-%d %H:%M'),
+                            'url': f"https://www.reddit.com{submission.permalink}",
+                            'keywords': matched_kws,
+                            'text': submission.selftext[:200] + '...',
+                            'ai_reply': ai_reply,
+                            'posted_auto': True
+                        })
+            except Exception as se:
+                print(f"Error scanning r/{sub_name} with API: {se}")
+    else:
+        # Fallback Scraper Mode for Dashboard
+        for sub in SUBREDDITS:
+            print(f"Scanning r/{sub} via Fallback Scraper...")
+            posts = fetch_reddit_posts_fallback(sub)
+            for p in posts:
+                pdata = p.get('data', {})
+                pid = pdata.get('id', '')
+                title = pdata.get('title', '')
+                text = pdata.get('selftext', '')
+                combined = (title + " " + text).lower()
                 
-                ai_suggested_reply = generate_ai_response(title, text)
-                
-                all_matches.append({
-                    'subreddit': sub,
-                    'title': title,
-                    'author': author,
-                    'date': date_str,
-                    'url': permalink,
-                    'keywords': matched_kws,
-                    'text': text[:200] + '...' if len(text) > 200 else text,
-                    'ai_reply': ai_suggested_reply
-                })
+                matched_kws = [kw for kw in KEYWORDS if kw in combined]
+                if matched_kws:
+                    permalink = "https://www.reddit.com" + pdata.get('permalink', '')
+                    author = pdata.get('author', 'user')
+                    created_utc = pdata.get('created_utc', 0)
+                    date_str = datetime.datetime.fromtimestamp(created_utc).strftime('%Y-%m-%d %H:%M')
+                    
+                    ai_reply = generate_ai_response(title, text)
+                    
+                    all_matches.append({
+                        'subreddit': sub,
+                        'title': title,
+                        'author': author,
+                        'date': date_str,
+                        'url': permalink,
+                        'keywords': matched_kws,
+                        'text': text[:200] + '...',
+                        'ai_reply': ai_reply,
+                        'posted_auto': False
+                    })
 
-    print(f"Found {len(all_matches)} relevant opportunities.")
+    # Save updated replied IDs
+    with open(REPLIED_FILE, 'w', encoding='utf-8') as f:
+        json.dump(list(replied_ids), f, ensure_ascii=False, indent=2)
 
-    # Write JSON
+    # Save JSON log
     with open(OUTPUT_JSON, 'w', encoding='utf-8') as f:
         json.dump(all_matches, f, ensure_ascii=False, indent=2)
 
-    # Build HTML Dashboard for GitHub Pages
+    # Build HTML Dashboard
     now_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M UTC')
+    status_text = f"⚡ 100% Autonomous Cloud Bot Active ({new_replies} auto-posted this run)" if reddit_api else "⚡ 24/7 Cloud Scanner Active"
     
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AI Reddit Marketing Hub - Taxi Marne-la-Vallée</title>
+  <title>24/7 Autonomous AI Reddit Bot - Taxi Marne-la-Vallée</title>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
   <style>
     body {{ font-family: 'Outfit', sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 24px; }}
@@ -142,15 +222,15 @@ def main():
 </head>
 <body>
   <div class="header">
-    <h1>🤖 AI Reddit Marketing Hub</h1>
-    <div class="status">⚡ GitHub Actions Auto-Bot Active · Last Scan: {now_str}</div>
+    <h1>🤖 24/7 Autonomous AI Reddit Bot</h1>
+    <div class="status">{status_text} · Last Run: {now_str}</div>
   </div>
 
   <div style="max-width: 900px; margin: 0 auto;">
 """
 
     if not all_matches:
-        html += "<p style='text-align:center;'>No new Reddit queries detected in the latest scan. Shortcuts below:</p>"
+        html += "<p style='text-align:center;'>No new Reddit transport questions detected in this run. Shortcuts below:</p>"
         html += """
         <div class="card" style="text-align:center;">
           <h3>🚀 Live Search Shortcuts</h3>
@@ -160,17 +240,18 @@ def main():
         """
     else:
         for idx, m in enumerate(all_matches):
+            auto_badge = " <span style='background:#10b981; color:#fff; padding:2px 8px; border-radius:4px; font-size:0.75rem;'>✅ AUTO-POSTED VIA API</span>" if m.get('posted_auto') else ""
             html += f"""
     <div class="card">
-      <div><span class="badge">r/{m['subreddit']}</span> <small style="color:#94a3b8;">u/{m['author']} • {m['date']}</small></div>
+      <div><span class="badge">r/{m['subreddit']}</span>{auto_badge} <small style="color:#94a3b8;">u/{m['author']} • {m['date']}</small></div>
       <h3 style="margin: 10px 0 5px 0;">{m['title']}</h3>
       <p style="color:#cbd5e1; font-size:0.9rem;">{m['text']}</p>
       
-      <h4 style="color:#f59e0b; margin-top:15px;">🤖 AI Generated Personalized Reply:</h4>
+      <h4 style="color:#f59e0b; margin-top:15px;">🤖 AI Generated Reply:</h4>
       <pre id="reply-{idx}">{m['ai_reply']}</pre>
       
-      <a href="{m['url']}" target="_blank" class="btn">💬 Post Reply on Reddit</a>
-      <button onclick="copyReply('reply-{idx}')" class="btn" style="background:#f59e0b; color:#0f172a; margin-left:10px;">📋 Copy AI Reply</button>
+      <a href="{m['url']}" target="_blank" class="btn">💬 View Thread on Reddit</a>
+      <button onclick="copyReply('reply-{idx}')" class="btn" style="background:#f59e0b; color:#0f172a; margin-left:10px;">📋 Copy Reply</button>
     </div>
 """
 
@@ -181,7 +262,7 @@ def main():
     function copyReply(id) {
       const text = document.getElementById(id).innerText;
       navigator.clipboard.writeText(text).then(() => {
-        alert('AI Reply copied to clipboard! Click "Post Reply on Reddit" to paste it.');
+        alert('AI Reply copied to clipboard!');
       });
     }
   </script>
@@ -192,7 +273,7 @@ def main():
     with open(OUTPUT_HTML, 'w', encoding='utf-8') as f:
         f.write(html)
 
-    print(f"Dashboard generated at {OUTPUT_HTML}")
+    print(f"✨ 24/7 Autonomous Bot run completed. Dashboard updated at {OUTPUT_HTML}")
 
 if __name__ == '__main__':
     main()
